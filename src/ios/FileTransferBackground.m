@@ -16,15 +16,6 @@
         }
 
         [FileUploader sharedInstance].delegate = self;
-        //mark all old uploads as failed to be retried
-        for (NSString* uploadId in [self getV1Uploads]){
-            [self sendCallback:@{
-                @"state" : @"FAILED",
-                @"id" : uploadId,
-                @"error": @"upload failed",
-                @"errorCode" : @500
-            }];
-        }
 
         for (UploadEvent* event in [UploadEvent allEvents]){
             [self uploadManagerDidReceiveCallback: [event dataRepresentation]];
@@ -89,28 +80,6 @@
 
 -(void)destroy:(CDVInvokedUrlCommand*)command{
     self.pluginCommand = nil;
-}
-
--(NSArray*)getV1Uploads{
-    //returns uploads made by older version of the plugin
-    NSMutableArray* oldUploadIds = [[NSMutableArray alloc] init];
-    NSURL* cachess = [[NSFileManager defaultManager] URLForDirectory:NSCachesDirectory inDomain:NSUserDomainMask appropriateForURL:nil create:YES error:NULL];
-    NSURL* workDirectoryURL = [cachess URLByAppendingPathComponent:@"FileUploadManager"];
-    NSArray* directoryContents = [[NSFileManager defaultManager] contentsOfDirectoryAtURL:workDirectoryURL
-                                                               includingPropertiesForKeys:@[NSURLIsDirectoryKey]
-                                                                                  options:NSDirectoryEnumerationSkipsSubdirectoryDescendants
-                                                                                    error:nil];
-    for (NSURL * itemURL in directoryContents) {
-        NSString* directoryName = [itemURL lastPathComponent];
-        if ([directoryName hasPrefix:@"Upload-"]) {
-            NSString* name = [[directoryName componentsSeparatedByString:@"*"] firstObject];
-            NSString* uploadId = [name stringByReplacingOccurrencesOfString:@"Upload-" withString:@""];
-            [oldUploadIds addObject:uploadId];
-        }
-    }
-    //remove the old uploads directory
-    [[NSFileManager defaultManager] removeItemAtURL:workDirectoryURL error:nil];
-    return oldUploadIds;
 }
 
 -(void)sendErrorCallback:(CDVInvokedUrlCommand*)command forException:(NSException*)exception{
