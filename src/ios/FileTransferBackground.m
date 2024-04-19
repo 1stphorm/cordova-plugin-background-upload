@@ -12,7 +12,15 @@
         self.pluginCommand = command;
         if (command.arguments.count > 0){
             NSDictionary* config = command.arguments[0];
-            FileUploader.parallelUploadsLimit = ((NSNumber*)config[@"parallelUploadsLimit"]).integerValue;
+            if ([config objectForKey:@"parallelUploadsLimit"] != nil) {
+                FileUploader.parallelUploadsLimit = ((NSNumber*)config[@"parallelUploadsLimit"]).integerValue;
+            }
+            if ([config objectForKey:@"resourceTimeout"] != nil) {
+                FileUploader.resourceTimeout = ((NSNumber*)config[@"resourceTimeout"]).integerValue;
+            }
+            if ([config objectForKey:@"requestTimeout"] != nil) {
+                FileUploader.requestTimeout = ((NSNumber*)config[@"requestTimeout"]).integerValue;
+            }
         }
 
         [FileUploader sharedInstance].delegate = self;

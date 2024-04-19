@@ -5,7 +5,12 @@
 @end
 
 @implementation FileUploader
-static NSInteger _parallelUploadsLimit = 1;
+
+// Default values.
+static NSInteger _parallelUploadsLimit = 5;
+static NSInteger _resourceTimeout = 3600; // One hour.
+static NSInteger _requestTimeout = 300; // 5 Minutes
+
 static FileUploader *singletonObject = nil;
 static NSString * kUploadUUIDStrPropertyKey = @"com.spoonconsulting.plugin-background-upload.UUID";
 
@@ -31,7 +36,11 @@ static NSString * kUploadUUIDStrPropertyKey = @"com.spoonconsulting.plugin-backg
     self.responsesData = [[NSMutableDictionary alloc] init];
 
     NSURLSessionConfiguration* configuration = [NSURLSessionConfiguration backgroundSessionConfigurationWithIdentifier:[[NSBundle mainBundle] bundleIdentifier]];
+
+    configuration.timeoutIntervalForRequest = FileUploader.requestTimeout;
+    configuration.timeoutIntervalForResource = FileUploader.resourceTimeout;
     configuration.HTTPMaximumConnectionsPerHost = FileUploader.parallelUploadsLimit;
+
     configuration.sessionSendsLaunchEvents = YES; // wake up the application when a task succeeds or fails
 
     __weak FileUploader *weakSelf = self;
@@ -87,6 +96,23 @@ static NSString * kUploadUUIDStrPropertyKey = @"com.spoonconsulting.plugin-backg
 
 -(void)sendEvent:(NSDictionary*)info{
     [self.delegate uploadManagerDidReceiveCallback:info];
+}
+
+
++(NSInteger)requestTimeout {
+    return _requestTimeout;
+}
+
++(void)setRequestTimeout:(NSInteger)value {
+    _requestTimeout = value;
+}
+
++(NSInteger)resourceTimeout {
+    return _resourceTimeout;
+}
+
++(void)setResourceTimeout:(NSInteger)value {
+    _resourceTimeout = value;
 }
 
 +(NSInteger)parallelUploadsLimit {
