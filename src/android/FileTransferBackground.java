@@ -244,6 +244,11 @@ public class FileTransferBackground extends CordovaPlugin {
 
         this.uploadCallback = callbackContext;
         this.ready = true;
+
+        // If we have pending jobs, start the workers.
+        if (AckDatabase.getInstance(cordova.getContext()).pendingUploadDao().getPendingUploadsCount() > 0) {
+            startWorkers();
+        }
     }
 
     private void addUpload(JSONObject jsonPayload) {
@@ -329,13 +334,16 @@ public class FileTransferBackground extends CordovaPlugin {
             )
         );
 
-        if (!workerIsStarted) {
-            startWorkers();
-            workerIsStarted = true;
-        }
+        startWorkers();
     }
 
     private void startWorkers() {
+        if (workerIsStarted) {
+            return;
+        }
+
+        workerIsStarted = true;
+
         logMessage("startUpload: Starting worker via work manager");
 
         for (int i = 0; i < ccUpload; i++) {
