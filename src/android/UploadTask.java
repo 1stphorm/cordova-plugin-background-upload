@@ -96,8 +96,10 @@ public final class UploadTask extends Worker {
 
         super(context, workerParams);
 
+        // Use the first upload in the database to configure everything.
         nextPendingUpload = AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getFirstPendingEntry();
 
+        // Initialize the httpClient if we don't already have it.
         if (httpClient == null) {
             httpClient = new OkHttpClient.Builder()
                     .followRedirects(true)
@@ -132,141 +134,154 @@ public final class UploadTask extends Worker {
     @NonNull
     @Override
     public Result doWork() {
-        if(!hasNetworkConnection()) {
+        // If we don't have a connection, mark this job as can be retried based off of the backoff config.
+        // It will be picked up again later.
+        if (!hasNetworkConnection()) {
             return Result.retry();
         }
 
         do {
-            nextPendingUpload = AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getFirstPendingEntry();
-
-            final String id = nextPendingUpload.getInputData().getString(KEY_INPUT_ID);
-
-            if (id == null) {
-                FileTransferBackground.logMessageError("doWork: ID is invalid !", null);
-                AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsPending(nextPendingUpload.getId());
-                return Result.failure();
-            }
-
-            // Check retry count
-            if (getRunAttemptCount() > MAX_TRIES) {
-                return Result.success(new Data.Builder()
-                        .putString(KEY_OUTPUT_ID, id)
-                        .putBoolean(KEY_OUTPUT_IS_ERROR, true)
-                        .putString(KEY_OUTPUT_FAILURE_REASON, "Too many retries")
-                        .putBoolean(KEY_OUTPUT_FAILURE_CANCELED, false)
-                        .build()
-                );
-            }
-
-            Request request = null;
             try {
-                request = createRequest();
-            } catch (FileNotFoundException e) {
-                FileTransferBackground.logMessageError("doWork: File not found!", e);
-                final Data data = new Data.Builder()
-                        .putString(KEY_OUTPUT_ID, id)
-                        .putBoolean(KEY_OUTPUT_IS_ERROR, true)
-                        .putString(KEY_OUTPUT_FAILURE_REASON, "File not found")
-                        .putBoolean(KEY_OUTPUT_FAILURE_CANCELED, false)
-                        .build();
-                // Mark it as done.
-                AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
-                AckDatabase.getInstance(getApplicationContext()).uploadEventDao().insert(new UploadEvent(id, data));
-                return Result.success(data);
-            } catch (NullPointerException e) {
-                return Result.retry();
-            }
-
-            // Register me
-            uploadForegroundNotification.progress(getId(), 0f);
-            handleNotification();
-
-            // Start call
-            currentCall = httpClient.newCall(request);
-
-            // Block until call is finished (or cancelled)
-            Response response = null;
-            try {
-                if (!DEBUG_SKIP_UPLOAD) {
-                    try {
-                        try {
-                            response = currentCall.execute();
-                        } catch (SocketTimeoutException e) {
-                            return Result.retry();
-                        }
-                    } catch (SocketException | ProtocolException | SSLException e) {
-                        currentCall.cancel();
-                        return Result.retry();
-                    }
-                } else {
-                    for (int i = 0; i < 10; i++) {
-                        handleProgress(i * 100, 1000);
-                        // Can be interrupted
-                        Thread.sleep(200);
-                        if (isStopped()) {
-                            throw new InterruptedException("Stopped");
-                        }
-                    }
+                // Try to get the next task to work on.
+                nextPendingUpload = AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getFirstPendingEntry();
+                // There is no task, so we have nothing to do. OK, just get out of here.
+                if (nextPendingUpload == null) {
+                    return Result.success();
                 }
-            } catch (IOException | InterruptedException e) {
-                // If it was user cancelled its ok
-                // See #handleProgress for cancel code
-                if (isStopped()) {
-                    final Data data = new Data.Builder()
+
+                // Update the Pending Upload DB to indicate that our upload is processing. This means that the next uploads will be able to continue.
+                AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsProcessing(nextPendingUpload.getId());
+
+                final String id = nextPendingUpload.getInputData().getString(KEY_INPUT_ID);
+
+                // If the ID is null... why would it be null? Then mark the UploadTask as failed and get rid of it.
+                if (id == null) {
+                    FileTransferBackground.logMessageError("doWork: ID is invalid !", null);
+                    AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
+                }
+
+                // Check retry count
+                if (getRunAttemptCount() > MAX_TRIES) {
+                    return Result.success(new Data.Builder()
                             .putString(KEY_OUTPUT_ID, id)
                             .putBoolean(KEY_OUTPUT_IS_ERROR, true)
-                            .putString(KEY_OUTPUT_FAILURE_REASON, "User cancelled")
-                            .putBoolean(KEY_OUTPUT_FAILURE_CANCELED, true)
-                            .build();
+                            .putString(KEY_OUTPUT_FAILURE_REASON, "Too many retries")
+                            .putBoolean(KEY_OUTPUT_FAILURE_CANCELED, false)
+                            .build()
+                    );
+                }
+
+                Request request = null;
+                try {
+                    request = createRequest();
+                } catch (FileNotFoundException e) {
+                    FileTransferBackground.logMessageError("doWork: File not found!", e);
+
+                    // Emit an error. We can't recover so mark it as done!
+                    this.emitUploadError(id, "File not found");
                     AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
-                    AckDatabase.getInstance(getApplicationContext()).uploadEventDao().insert(new UploadEvent(id, data));
-                    return Result.success(data);
-                } else {
-                    // But if it was not it must be a connectivity problem or
-                    // something similar so we retry later
-                    FileTransferBackground.logMessageError("doWork: Call failed, retrying later", e);
-                    return Result.retry();
+                } catch (NullPointerException e) {
+                    // No clue. Get out of here.
+                    this.emitUploadError(id, "Null pointer exception");
+                    AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
                 }
-            } finally {
-                // Always remove ourselves from the notification
-                uploadForegroundNotification.done(getId());
+
+                // Register me
+                uploadForegroundNotification.progress(getId(), 0f);
+                handleNotification();
+
+                // Start call
+                currentCall = httpClient.newCall(request);
+
+                // Block until call is finished (or cancelled)
+                Response response = null;
+                try {
+                    if (!DEBUG_SKIP_UPLOAD) {
+                        try {
+                            try {
+                                response = currentCall.execute();
+                            } catch (SocketTimeoutException e) {
+                                return Result.retry();
+                            }
+                        } catch (SocketException | ProtocolException | SSLException e) {
+                            currentCall.cancel();
+                            return Result.retry();
+                        }
+                    } else {
+                        for (int i = 0; i < 10; i++) {
+                            handleProgress(i * 100, 1000);
+                            // Can be interrupted
+                            Thread.sleep(200);
+                            if (isStopped()) {
+                                throw new InterruptedException("Stopped");
+                            }
+                        }
+                    }
+                } catch (IOException | InterruptedException e) {
+                    // If it was user cancelled its ok
+                    // See #handleProgress for cancel code
+                    if (isStopped()) {
+                        Data data = this.emitUploadError(id, "User cancelled", true);
+                        AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
+                        return Result.success(data);
+                    } else {
+                        // But if it was not it must be a connectivity problem or
+                        // something similar so we retry later
+                        FileTransferBackground.logMessageError("doWork: Call failed, retrying later", e);
+
+                        this.emitUploadError(id, "System error: " + e.getMessage());
+                        AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
+                        continue;
+                    }
+                } finally {
+                    // Always remove ourselves from the notification
+                    uploadForegroundNotification.done(getId());
+                }
+
+                if (response == null) {
+                    this.emitUploadError(id, "Upload response was null");
+                    AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
+                    continue;
+                }
+
+                // Start building the output data
+                final Data.Builder outputData = new Data.Builder()
+                        .putString(KEY_OUTPUT_ID, id)
+                        .putBoolean(KEY_OUTPUT_IS_ERROR, false)
+                        .putInt(KEY_OUTPUT_STATUS_CODE, (!DEBUG_SKIP_UPLOAD) ? response.code() : 200);
+
+                // Try read the response body, if any
+                try {
+                    final String res;
+                    if (!DEBUG_SKIP_UPLOAD) {
+                        res = response.body() != null ? response.body().string() : "";
+                    } else {
+                        res = "<span>heyo</span>";
+                    }
+                    final String filename = "upload-response-" + getId() + ".cached-response";
+
+                    try (FileOutputStream fos = getApplicationContext().openFileOutput(filename, Context.MODE_PRIVATE)) {
+                        fos.write(res.getBytes(StandardCharsets.UTF_8));
+                    }
+
+                    outputData.putString(KEY_OUTPUT_RESPONSE_FILE, filename);
+                } catch (IOException e) {
+                    // Should never happen, but if it does it has something to do with reading the response
+                    FileTransferBackground.logMessageError("doWork: Error while reading the response body", e);
+
+                    // But recover and replace the body with something else
+                    outputData.putString(KEY_OUTPUT_RESPONSE_FILE, null);
+                }
+
+                final Data data = outputData.build();
+                AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
+                AckDatabase.getInstance(getApplicationContext()).uploadEventDao().insert(new UploadEvent(id, data));
+            } catch (Exception e) {
+                this.emitUploadError(nextPendingUpload.getId(), "Caught major exception: " + e.getMessage());
             }
+        } while (AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getPendingUploadsCount() > 0);
 
-            // Start building the output data
-            final Data.Builder outputData = new Data.Builder()
-                    .putString(KEY_OUTPUT_ID, id)
-                    .putBoolean(KEY_OUTPUT_IS_ERROR, false)
-                    .putInt(KEY_OUTPUT_STATUS_CODE, (!DEBUG_SKIP_UPLOAD) ? response.code() : 200);
-
-            // Try read the response body, if any
-            try {
-                final String res;
-                if (!DEBUG_SKIP_UPLOAD) {
-                    res = response.body() != null ? response.body().string() : "";
-                } else {
-                    res = "<span>heyo</span>";
-                }
-                final String filename = "upload-response-" + getId() + ".cached-response";
-
-                try (FileOutputStream fos = getApplicationContext().openFileOutput(filename, Context.MODE_PRIVATE)) {
-                    fos.write(res.getBytes(StandardCharsets.UTF_8));
-                }
-
-                outputData.putString(KEY_OUTPUT_RESPONSE_FILE, filename);
-
-            } catch (IOException e) {
-                // Should never happen, but if it does it has something to do with reading the response
-                FileTransferBackground.logMessageError("doWork: Error while reading the response body", e);
-
-                // But recover and replace the body with something else
-                outputData.putString(KEY_OUTPUT_RESPONSE_FILE, null);
-            }
-
-            final Data data = outputData.build();
-            AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().markAsUploaded(nextPendingUpload.getId());
-            AckDatabase.getInstance(getApplicationContext()).uploadEventDao().insert(new UploadEvent(id, data));
-        } while(AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getPendingUploadsCount() > 0);
-
+        // Now that we've exited the loop, we don't want to have the database continue to grow.
         final List<PendingUpload> pendingUploads = AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getCompletedUploads();
 
         for (PendingUpload pendingUpload: pendingUploads) {
@@ -301,6 +316,28 @@ public final class UploadTask extends Worker {
         FileTransferBackground.logMessage("handleProgress: Progress data: " + data);
         setProgressAsync(data);
         handleNotification();
+    }
+
+
+    private Data emitUploadError(String id, String reason) {
+        return this.emitUploadError(id, reason, false);
+    }
+
+    private Data emitUploadError(String id, String reason, boolean wasCancelled) {
+        return this.emitUploadData(id, reason, true, wasCancelled);
+    }
+
+    private Data emitUploadData(String id, String reason, boolean isError, boolean wasCancelled) {
+        final Data data = new Data.Builder()
+                .putString(KEY_OUTPUT_ID, id)
+                .putBoolean(KEY_OUTPUT_IS_ERROR, isError)
+                .putString(KEY_OUTPUT_FAILURE_REASON, reason)
+                .putBoolean(KEY_OUTPUT_FAILURE_CANCELED, wasCancelled)
+                .build();
+
+        AckDatabase.getInstance(getApplicationContext()).uploadEventDao().insert(new UploadEvent(id, data));
+
+        return data;
     }
 
     /**

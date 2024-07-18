@@ -34,6 +34,9 @@ public interface PendingUploadDao {
     @Query("SELECT COUNT(*) FROM pending_upload WHERE state = 'UPLOADED'")
     int getCompletedUploadsCount();
 
+    @Query("UPDATE pending_upload SET state = 'PROCESSING' WHERE ID = :id")
+    void markAsProcessing(final String id);
+
     @Query("UPDATE pending_upload SET state = 'PENDING' WHERE ID = :id")
     void markAsPending(final String id);
 
