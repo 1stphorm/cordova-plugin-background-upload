@@ -92,20 +92,9 @@ public final class UploadTask extends Worker {
 
     private PendingUpload nextPendingUpload;
 
-    private static boolean firstMigrationFlag = false;
-
     public UploadTask(@NonNull Context context, @NonNull WorkerParameters workerParams) {
 
         super(context, workerParams);
-
-        // Migrating code from 4.0.9 to 4.0.10 - Check if upload comes from another worker and does not exists in table
-        String oldUploadTaskId = workerParams.getInputData().getString(KEY_INPUT_ID);
-        if (!firstMigrationFlag && oldUploadTaskId != null && AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getById(oldUploadTaskId) == null) {
-            FileTransferBackground.logMessage("Migrating upload " + oldUploadTaskId);
-            AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().insert(new PendingUpload(oldUploadTaskId, workerParams.getInputData()));
-            FileTransferBackground.logMessage("Retrying migrated upload " + oldUploadTaskId + " after some seconds...");
-            firstMigrationFlag = true;
-        }
 
         nextPendingUpload = AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getFirstPendingEntry();
 
@@ -145,15 +134,6 @@ public final class UploadTask extends Worker {
     public Result doWork() {
         if(!hasNetworkConnection()) {
             return Result.retry();
-        }
-
-        // Migrating code from 4.0.9 to 4.0.10 - Check if upload comes from another worker and does not exists in table
-        String oldUploadTaskId = getInputData().getString(KEY_INPUT_ID);
-        if (oldUploadTaskId != null && AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().getById(oldUploadTaskId) == null && firstMigrationFlag == true) {
-            FileTransferBackground.logMessage("Migrating upload " + oldUploadTaskId);
-            AckDatabase.getInstance(getApplicationContext()).pendingUploadDao().insert(new PendingUpload(oldUploadTaskId, getInputData()));
-            FileTransferBackground.logMessage("Retrying migrated upload " + oldUploadTaskId + " after some seconds...");
-            return Result.success();
         }
 
         do {
