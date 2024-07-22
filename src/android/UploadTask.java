@@ -247,7 +247,7 @@ public final class UploadTask extends Worker {
                 // Start building the output data
                 final Data.Builder outputData = new Data.Builder()
                         .putString(KEY_OUTPUT_ID, id)
-                        .putBoolean(KEY_OUTPUT_IS_ERROR, false)
+                        .putBoolean(KEY_OUTPUT_IS_ERROR, !response.isSuccessful())
                         .putInt(KEY_OUTPUT_STATUS_CODE, (!DEBUG_SKIP_UPLOAD) ? response.code() : 200);
 
                 // Try read the response body, if any
