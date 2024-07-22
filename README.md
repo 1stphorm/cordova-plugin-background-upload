@@ -32,7 +32,6 @@ will provide global events which can be used to check the progress of the upload
 parallel uploads allowed is set to 1. You can override it by changing the configuration on init.
 
 ```javascript
-declare
 var FileTransferManager: any;
 var config = {};
 var uploader = FileTransferManager.init(config, callback);
