@@ -164,7 +164,7 @@ public final class UploadTask extends Worker {
                 request = createRequest();
             } catch (FileNotFoundException e) {
                 Log.e(TAG, ("doWork: File not found!", e);
-                return Result.success(new Data.Builder()
+                return Result.failure(new Data.Builder()
                         .putString(KEY_OUTPUT_ID, id)
                         .putBoolean(KEY_OUTPUT_IS_ERROR, true)
                         .putString(KEY_OUTPUT_FAILURE_REASON, "File not found!")
