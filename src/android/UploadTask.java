@@ -47,7 +47,7 @@ public final class UploadTask extends Worker {
     public static final String NOTIFICATION_CHANNEL_ID = "com.spoon.backgroundfileupload.channel";
     public static final String NOTIFICATION_CHANNEL_NAME = "upload channel";
 
-    public static final int MAX_TRIES = 10;
+    public static final int MAX_TRIES = 3;
 
     // Key stuff
     // <editor-fold>
