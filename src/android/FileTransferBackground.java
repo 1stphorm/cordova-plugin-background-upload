@@ -83,9 +83,9 @@ public class FileTransferBackground extends CordovaPlugin {
 
     private void sendSuccess(final String id, final String response, int statusCode) {
         if (response != null && !response.isEmpty()) {
-            Log.d(TAG, "eventLabel='Uploader onSuccess' uploadId='" + id + "' response='" + response.substring(0, Math.min(2000, response.length() - 1)) + "'");
+            Log.d(TAG, "Uploader onSuccess uploadId='" + id + "' response='" + response.substring(0, Math.min(2000, response.length() - 1)) + "'");
         } else {
-            Log.d(TAG, "eventLabel='Uploader onSuccess' uploadId='" + id + "' response=''");
+            Log.d(TAG, "Uploader onSuccess uploadId='" + id + "' (empty response)");
         }
 
         try {
@@ -103,7 +103,7 @@ public class FileTransferBackground extends CordovaPlugin {
     }
 
     private void sendError(final String id, final String reason, boolean userCanceled) {
-        Log.d(TAG, "eventLabel='Uploader onError' uploadId='" + id + "' error='" + reason + "'");
+        Log.d(TAG, "Uploader onError uploadId='" + id + "' error='" + reason + "'");
 
         try {
             sendCallback(new JSONObject()
@@ -172,7 +172,7 @@ public class FileTransferBackground extends CordovaPlugin {
                     .putInt(UploadTask.KEY_INPUT_CONFIG_CONCURRENT_DOWNLOADS, ccUpload)
                     .build();
         } catch (JSONException e) {
-            Log.d(TAG, "eventLabel='Uploader could not read parallelUploadsLimit from config' error='" + e.getMessage() + "'");
+            Log.d(TAG, "Uploader could not read parallelUploadsLimit from config error='" + e.getMessage() + "'");
         }
 
         // Register notification channel if the android version requires it
@@ -235,7 +235,12 @@ public class FileTransferBackground extends CordovaPlugin {
                                     break;
                                 case FAILED:
                                     // The task can't fail completely so something really bad has happened.
-                                    Log.d(TAG, "eventLabel='Uploader failed inexplicably' error='" + info.getOutputData() + "'");
+                                    Log.d(TAG, "Uploader failed inexplicably (" + info.getOutputData() + ")");
+                                    sendError(
+                                            info.getOutputData().getString(UploadTask.KEY_OUTPUT_ID),
+                                            info.getOutputData().getString(UploadTask.KEY_OUTPUT_FAILURE_REASON),
+                                            info.getOutputData().getBoolean(UploadTask.KEY_OUTPUT_FAILURE_CANCELED, false)
+                                    );
                                     break;
                             }
                         }
@@ -256,7 +261,7 @@ public class FileTransferBackground extends CordovaPlugin {
         try {
             payload = FileTransferBackground.convertToHashMap(jsonPayload);
         } catch (JSONException error) {
-            Log.d(TAG, "eventLabel='Uploader could not read id from payload' error:'" + error.getMessage() + "'");
+            Log.d(TAG, "Uploader could not read id from payload (" + error.getMessage() + ")");
         }
         if (payload == null) return;
 
@@ -269,7 +274,7 @@ public class FileTransferBackground extends CordovaPlugin {
         try {
             headers = convertToHashMap((JSONObject) payload.get("headers"));
         } catch (JSONException e) {
-            Log.d(TAG, "eventLabel='could not parse request headers' uploadId='" + uploadId + "' error='" + e.getMessage() + "'");
+            Log.d(TAG, "Could not parse request headers uploadId='" + uploadId + "' (" + e.getMessage() + ")");
             sendAddingUploadError(uploadId, e);
             return;
         }
@@ -285,7 +290,7 @@ public class FileTransferBackground extends CordovaPlugin {
         try {
             parameters = convertToHashMap((JSONObject) payload.get("parameters"));
         } catch (JSONException e) {
-            Log.d(TAG, "eventLabel='could not parse request headers' uploadId='" + uploadId + "' error='" + e.getMessage() + "'");
+            Log.d(TAG, "Could not parse request headers uploadId='" + uploadId + "' error='" + e.getMessage() + "'");
             sendAddingUploadError(uploadId, e);
             return;
         }
@@ -355,7 +360,7 @@ public class FileTransferBackground extends CordovaPlugin {
         WorkManager.getInstance(cordova.getContext())
                 .enqueueUniqueWork(uploadId, ExistingWorkPolicy.APPEND, workRequest);
 
-        Log.i(TAG, "eventLabel='Uploader starting upload' uploadId='" + uploadId + "'");
+        Log.i(TAG, "Starting upload uploadId='" + uploadId + "'");
     }
 
     private void sendAddingUploadError(String uploadId, Exception error) {
@@ -373,7 +378,7 @@ public class FileTransferBackground extends CordovaPlugin {
     }
 
     private void removeUpload(String uploadId, CallbackContext context) {
-        Log.d(TAG, "eventLabel='Remove upload " + uploadId + "'");
+        Log.d(TAG, "Remove upload id='" + uploadId + "'");
 
         // Cancel the task ...
         WorkManager.getInstance(cordova.getContext())
@@ -390,7 +395,7 @@ public class FileTransferBackground extends CordovaPlugin {
     }
 
     private void acknowledgeEvent(String eventId, CallbackContext context) {
-        Log.d(TAG, "eventLabel='ACK event " + eventId + "'");
+        Log.d(TAG, "ACK event " + eventId);
 
         // Cleanup will delete the ACK.
         cleanupUpload(eventId);
@@ -456,7 +461,7 @@ public class FileTransferBackground extends CordovaPlugin {
 
                 task = tasks.get(0);
             } catch (ExecutionException | InterruptedException | IllegalStateException e) {
-                Log.d(TAG, "eventLabel='Failed to get work info for cleanup (" + uploadId + ")' error='" + e.getMessage() + "'");
+                Log.d(TAG, "Failed to get work info for cleanup (" + uploadId + ") error='" + e.getMessage() + "'");
                 return;
             }
 
@@ -471,7 +476,7 @@ public class FileTransferBackground extends CordovaPlugin {
     }
 
     public void onDestroy() {
-        Log.d(TAG, "eventLabel='Uploader plugin onDestroy'");
+        Log.d(TAG, "Uploader plugin onDestroy");
         destroy();
     }
 
@@ -520,6 +525,7 @@ public class FileTransferBackground extends CordovaPlugin {
                 .fromTags(Arrays.asList(FileTransferBackground.WORK_TAG_UPLOAD))
                 .addStates(Arrays.asList(WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED))
                 .build();
+
         List<WorkInfo> workInfo;
         try {
             workInfo = WorkManager.getInstance(context)
