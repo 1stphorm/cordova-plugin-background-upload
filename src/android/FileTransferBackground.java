@@ -47,7 +47,7 @@ public class FileTransferBackground extends CordovaPlugin {
     private static final String TAG = "FileTransferBackground";
     public static final String WORK_TAG_UPLOAD = "work_tag_upload";
 
-    private CallbackContext uploadCallback;
+    private static CallbackContext uploadCallback;
     private boolean ready = false;
 
     private Data httpClientBaseConfig = Data.EMPTY;
